@@ -9,13 +9,10 @@
 #   * @version 0.1
 #   **/
 
-# In[1]:
+#                                              #-- IMPORTS: --#
 
 from datetime import datetime
-now1 = datetime.now()
-#print("Début du script =", now1)
-# import warnings
-# warnings.filterwarnings('ignore')
+from dateutil.relativedelta import *
 
 import os
 import sys
@@ -34,12 +31,6 @@ from cassandra.auth import PlainTextAuthProvider
 auth_provider = PlainTextAuthProvider(username='cassandra', password='cassandra')
 cluster = Cluster(['srv-cassandra'], auth_provider=auth_provider)
 session = cluster.connect()
-insertinto = session.prepare("""
-                             INSERT INTO ods.tags_values (name, year, min_timestamp, max_timestamp, value_float, value_int, value_string, value_binary, value, qualite, value_type, atelier, machine, section, detail, type, description) 
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                             """)
-# bounded = insertinto.bind(listCass)                
-# session.execute(bounded)
 
 #Connexion base SQL
 import pyodbc
@@ -50,13 +41,14 @@ database = ''
 username = 'tag_visu'
 password = 'tag_visu'
 
-cnxn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};SERVER='+server+';DATABASE='+database+';UID='+username+';PWD='+ password)
-cursor = cnxn.cursor()
+# cnxn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};SERVER='+server+';DATABASE='+database+';UID='+username+';PWD='+ password)
+# cursor = cnxn.cursor()
 
 #Récupération de la liste de tags + création d'une liste
-sql_query = pd.read_sql_query("SELECT Name FROM Aether.dbo.timeseriestransfers where Name > 'V3.'",cnxn)
-taglist = sql_query.Name.values.tolist()
+# sql_query = pd.read_sql_query("SELECT Name FROM Aether.dbo.timeseriestransfers where Name > 'V3.'",cnxn)
+# taglist = sql_query.Name.values.tolist()
 
+# Récupération de la liste de tag Rouge_Vert
 rows = session.execute("""SELECT name FROM ods.tags_def WHERE line = 'V3_rv'""")
 taglist2 = []
 for row in rows :
@@ -104,15 +96,110 @@ def getDuration(then, now, interval = "default"):
         'default': totalDuration()
     }[interval]
 
+def vitesse_ligne_actuelle(machine_prod) :            
+    if machine_prod == 'V1' :
+        tag_vitesse = 'V1.LF.enr1.SI3880.pv'
+    elif machine_prod == 'V2' :
+        tag_vitesse = 'V2.LF.ENR.vitesse_chariot.pv'
+    elif machine_prod == 'V3' :
+        tag_vitesse = 'V3.LF.LV3.SI0611.pv'
+    elif machine_prod == 'T4' :
+        tag_vitesse = 'T4.LF.LF.vitM6.pv'
+    elif machine_prod == 'FT1' :
+        st.info("FT1 pas encore géré")
+    else :
+        st.warning("Veuillez choisir une ligne correcte")
+
+    try :
+        rows_vitesse = session.execute("""SELECT value
+                                    FROM aethertimeseries.datapointsyear 
+                                    WHERE name = $$"""+tag_vitesse+"""$$ 
+                                    AND year = """+yyear+"""
+
+                                    AND timestamp >= $$"""+str(datedebut)+"""$$
+                                    AND timestamp <= $$"""+str(datefin)+"""$$
+
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1;
+                               """)
+        for row in rows_vitesse :
+            list_vitesse = [row.value]
+
+        vitesse = round(float(list_vitesse[0]),1)
+    except :
+        st.warning("Il y a eu un problème - sûrement lors de l'import du tag")
+        vitesse = ("ERROR")
+    return vitesse
+
+def creation_dataframes(list_bonne_marche, path_part_1) :
+    list_return = []
+    try :
+        path_final = path_part_1 + list_bonne_marche[0]
+        df1 = pd.read_csv(path_final, encoding = 'latin1', sep= ";")
+        list_return.append(df1)
+    except :
+        pass
+    try :
+        path_final = path_part_1 + list_bonne_marche[1]
+        df2 = pd.read_csv(path_final, encoding = 'latin1', sep= ";")
+        list_return.append(df2)
+    except :
+        pass
+    try :
+        path_final = path_part_1 + list_bonne_marche[2]
+        df3 = pd.read_csv(path_final, encoding = 'latin1', sep= ";")
+        list_return.append(df3)
+    except :
+        pass
+    return list_return
+
+def fusion_dataframes(list_of_dataframe) :
+    combien = len(list_of_dataframe)
+    
+    if combien == 1 :
+        df_tmp_1 = list_of_dataframe[0]
+        return df_tmp_1
+    
+    elif combien == 2 :
+        df_tmp_1 = list_of_dataframe[0]
+        df_tmp_2 = list_of_dataframe[1]
+        
+        list_tags = df_tmp_1.pop('tag_name')
+        list_tags = df_tmp_2.pop('tag_name')
+        
+        df_added = (df_tmp_1.add(df_tmp_2)) / 2
+        df_added['tag_name'] = list_tags
+        return df_added
+    
+    elif combien == 3 :
+        df_tmp_1 = list_of_dataframe[0]
+        df_tmp_2 = list_of_dataframe[1]
+        df_tmp_3 = list_of_dataframe[2]
+        
+        list_tags = df_tmp_1.pop('tag_name')
+        list_tags = df_tmp_2.pop('tag_name')
+        list_tags = df_tmp_3.pop('tag_name')
+        
+        df_added = (df_tmp_1.add(df_tmp_2).add(df_tmp_3)) / 3
+        df_added['tag_name'] = list_tags
+        return df_added
+    
 ###########################################################################
 
+#                                              #-- Rouge Vert: --#
 def main_rv() :
+    
+    now1 = datetime.now() - relativedelta(minutes = +3)
     
     #------------------------------------Sidebar------------------------------------#
     
-    st.sidebar.markdown("# Rouge vert :")
-    
-    
+    st.sidebar.title("Rouge vert :")
+    st.sidebar.markdown("* * *")
+    try :
+        if reference_prod == '4F53 -V3' :
+            st.sidebar.markdown("## Bonnes marches du 4F53 -V3")
+    except :
+        st.sidebar.info("Selectionnez une ligne de production et une référence")
     
     #-------------------------------------------------------------------------------#
     #------------------------------------Filtres------------------------------------#
@@ -120,146 +207,101 @@ def main_rv() :
     st.info("Bienvenue sur l'outil Big Data __Rouge_Vert__")
     st.success("Commençons par filtrer")
     st.title("Filtrage")
+    my_bar1 = st.progress(2)
     
-    machine_prod = st.selectbox("Selection de la ligne de production",['Faire un choix','V1','V2','V3','T4','FT1'])
+    choix1 = ["Faire un choix"]
+    temp = os.listdir("/share-srvcassandra/Rouge_Vert_Data/")
+    for i in range (len(temp)) :
+        choix1.append(temp[i])
+        
+    machine_prod = st.selectbox("Selection de la ligne de production",choix1)
     
     if machine_prod == 'Faire un choix' :
         st.warning("Selectionnez une ligne de production")
-    elif machine_prod == 'V3' : 
-        reference_prod = st.selectbox("Selection de la référence prod",
-                                      ['Faire un choix','Pas de choix','4,5F53 -V3','4,5F531 -V3','4F53 -V3'])
+    else : 
+        for j in range (0,25):
+            my_bar1.progress(j)
+            time.sleep(0.1)
+        my_bar1.progress(25)
+        choix2 = ["Faire un choix"]
+        path = "/share-srvcassandra/Rouge_Vert_Data/" + str(machine_prod)
+        temp = os.listdir(path)
+        for i in range (len(temp)) :
+            choix2.append(temp[i])
+            
+        reference_prod = st.selectbox("Selection de la référence prod", choix2)
+        
         if reference_prod == 'Faire un choix' :
             st.warning("Selectionnez une référence à étudier")
         else :
-            my_bar1 = st.progress(2)
-            st.success("Choisissez maintenant la bonne periode à inspecter")
-                        
-            st.title("Choisissez la période comparée :")
-            
-            st.info("A venir ; comparaison avec valeurs actuelles (presque en direct)")
-            
-            debut_periode_comp = st.date_input("Période comparée : Début", 
-                                               min_value = dt.datetime(2017,4,1),
-                                               max_value = datetime.now(), 
-                                               value=dt.datetime(2017, 4, 1))
-            debut_heure_comp = st.time_input("Heure de début", value=dt.datetime(1,1,1,5,0))
-            comparisonhours1 = (debut_heure_comp.hour)*60 + (debut_heure_comp.minute)
-            
-            fin_periode_comp = st.date_input("Période comparée : Fin",
-                                             min_value = debut_periode_comp, 
-                                             max_value = datetime.now(), 
-                                             value=datetime.now())
-            fin_heure_comp = st.time_input("Heure de fin", value=dt.datetime(1,1,1,5,0))
-            comparisonhours2 = (fin_heure_comp.hour)*60 + (fin_heure_comp.minute)
-            
-            if (debut_periode_comp == fin_periode_comp) and (int(comparisonhours1-comparisonhours2) > 0) : 
-                st.warning("Problème dans les heures")
-            elif debut_periode_comp > fin_periode_comp :
-                st.warning("Les dates sont mauvaises")
-            elif (str(debut_periode_comp) == "2017-04-01") :
-                st.warning("Choisir une date de début postérieur au 1er Avril 2017")
-            elif (str(debut_periode_comp) != "2017-04-01") and (debut_periode_comp <= fin_periode_comp) :
-                
-                datedebut = dt.datetime.combine(debut_periode_comp, debut_heure_comp)
-                datefin = dt.datetime.combine(fin_periode_comp, fin_heure_comp)
-                
-                st.write(getDuration(datedebut, datefin))
-                
-                my_bar2 = st.progress(0)
-                my_bar1.progress(25)
-                my_bar2.progress(25)
-                st.success("Maintenant, les bonnes périodes pour comparer")
-                                
-                st.title("Bonnes périodes :")                
-                list_periode = []
-                
-                bonneperiodedebut1 = st.text_input("Bonne période 1 : Date et heure début",
-                                                   value = "Format YYYY-MM-JJ HH:mm")
-                bonneperiodefin1 = st.text_input("Bonne période 1 : Date et heure fin",
-                                                 value = "Format YYYY-MM-JJ HH:mm")
-                validation1 = st.checkbox("Validation bonne période 1")
-                if validation1 :
-                    list_periode.append(bonneperiodedebut1)
-                    list_periode.append(bonneperiodefin1)
-                
-                st.markdown("* * *")
-                bonneperiodedebut2 = st.text_input("Bonne période 2 : Date et heure début",
-                                                   value = "--")
-                bonneperiodefin2 = st.text_input("Bonne période 2 : Date et heure fin",
-                                                 value = "--")
-                validation2 = st.checkbox("Validation bonne période 2")
-                if validation2 :
-                    list_periode.append(bonneperiodedebut2)
-                    list_periode.append(bonneperiodefin2)
-                
-                st.markdown("* * *")
-                bonneperiodedebut3 = st.text_input("Bonne période 3 : Date et heure début",
-                                                   value = "--")
-                bonneperiodefin3 = st.text_input("Bonne période 3 : Date et heure fin",
-                                                 value = "--")
-                validation3 = st.checkbox("Validation bonne période 3")
-                if validation3 :
-                    list_periode.append(bonneperiodedebut3)
-                    list_periode.append(bonneperiodefin3)
-                
-                st.markdown("* * *")                
-                
-                if validation1 or validation2 or validation3 :
-                    my_bar3 = st.progress(50)
-                    my_bar1.progress(50)
-                    my_bar2.progress(50)
-                    
-                    list_periode_fix = list_periode
-                    
-                try :
-                    st.write(list_periode_fix)
-                except :
-                    st.info("Validez au moins 1 bonne période ou vérifiez les infos")
+             
+            st.success("GO ?")                        
 
+            
 
-#                 st.write(getDuration(then, now))
+            datedebut = (now1 - relativedelta(minutes = +21)).strftime("%Y-%m-%d %H:%M")
+            datefin = now1.strftime("%Y-%m-%d %H:%M")
+            yyear = str(now1.year)
+
+            for j in range (25,50):
+                my_bar1.progress(j)
+                time.sleep(0.05)
+            my_bar1.progress(50)
+            
+            st.title("Go :")
+
+            # Checkpoint
+            etapesuivante = 0
+            if st.button("go") :
+                etapesuivante = 1              
+            if etapesuivante == 1 :
+                my_bar1.progress(100)
 
                 dataz = {'name': [], 'timestamp': [], 'value': []}
                 df_bonne_periode_final = pd.DataFrame(dataz)
                 my_bar_bonne_periode = st.progress(0)
-#                 for i in range (len(taglist2)): #len(taglist)
+                for i in range (len(taglist2)): #len(taglist)
 
-#                     #requête CQL. Tri sur la date
-#                     prog = 100*i/(len(taglist2)-1)
-#                     my_bar_bonne_periode.progress(int(prog))
-#                     rows_bonne_periode = session.execute("""SELECT name, timestamp, value
-#                                                 FROM aethertimeseries.datapointsyear 
-#                                                 WHERE name = $$"""+taglist[i]+"""$$ 
-#                                                 AND year = """+str(debut_periode_comp.year)+"""
+                    # Progression de la barre
+                    prog = 100*i/(len(taglist2)-1)
+                    my_bar_bonne_periode.progress(int(prog))
 
-#                                                 AND timestamp >= $$"""+str(datedebut)+"""$$
-#                                                 AND timestamp <= $$"""+str(datefin)+"""$$
+                    #requête CQL. Tri sur la date
+                    rows_bonne_periode = session.execute("""SELECT name, timestamp, value
+                                                FROM aethertimeseries.datapointsyear 
+                                                WHERE name = $$"""+taglist2[i]+"""$$ 
+                                                AND year = """+yyear+"""
 
-#                                                 ORDER BY timestamp;
-                                                
-#                                            """)
-#                     k=0
-#                     # Cassandra
-#                     for row in rows_bonne_periode :
-#                         list_bonne_periode=[row.name, row.timestamp, row.value]
-                        
-#                         data_bonne_periode = {'name': [list_bonne_periode[0]], 
-#                                               'timestamp': [list_bonne_periode[1]], 
-#                                               'value': [list_bonne_periode[2]]}
-#                         df_sub_tag = pd.DataFrame(data_bonne_periode)
-#                         df_bonne_periode_final = pd.concat([df_bonne_periode_final, df_sub_tag],
-#                                                            axis = 0,
-#                                                            ignore_index=True)
-                        
+                                                AND timestamp >= $$"""+str(datedebut)+"""$$
+                                                AND timestamp <= $$"""+str(datefin)+"""$$
+
+                                                ORDER BY timestamp DESC
+                                                LIMIT 1;
+
+                                           """)
+                    k=0
+                    # Cassandra
+                    for row in rows_bonne_periode :
+                        list_bonne_periode=[row.name, row.timestamp, row.value]
+
+                        data_bonne_periode = {'name': [list_bonne_periode[0]], 
+                                              'timestamp': [list_bonne_periode[1]], 
+                                              'value': [list_bonne_periode[2]]}
+                        df_sub_tag = pd.DataFrame(data_bonne_periode)
+                        df_bonne_periode_final = pd.concat([df_bonne_periode_final, df_sub_tag],
+                                                           axis = 0,
+                                                           ignore_index=True)
+                    
+                st.write("La vitesse actuelle de ", machine_prod, " est", vitesse_ligne_actuelle(machine_prod))
+                path_part_1 = "/share-srvcassandra/Rouge_Vert_Data/" + str(machine_prod) + "/" + str(reference_prod) + "/"
+
                 st.dataframe(df_bonne_periode_final)
+                
 
-        
-    else :
-        st.info("Veuilliez selectionner V3 - seul actif pour le moment")
     
     #-------------------------------------------------------------------------------#
 
-def main() :
+def main_gene() :
     
     #------------------------------------Sidebar------------------------------------#
     
@@ -267,7 +309,7 @@ def main() :
 
     st.sidebar.markdown("""> ## <center>(1) ID Produit direct</center>
     """, unsafe_allow_html = True)
-    id_produit1 = st.sidebar.text_input("Id produit :")
+    id_produit1 = st.sidebar.text_input("Id produit :", value = '00000000')
     
     st.sidebar.markdown("""<h2 style="color:white; background-color:Navy;"><center> Ou cherchez à partir d'un rouleau </center></h2>
     """, unsafe_allow_html = True)
@@ -305,13 +347,12 @@ def main() :
     df_family_final = pd.DataFrame()
     df_gen_final = pd.DataFrame()
    
-    rows_history = session.execute("""SELECT id_rouleau, genealogie FROM ods.genealogie
+    rows_history = session.execute("""SELECT id_rouleau, genealogie, type_produit FROM ods.genealogie
                                       WHERE id_produit = $$"""+id_produit+"""$$;
                                       """)
     list_history = []
     for row in rows_history :
-        list_history = []    
-        for i in range (len(row)) :
+        for i in range (3) :
             list_history.append(row[i])
             
     if len(list_history) > 0 :
@@ -344,21 +385,24 @@ def main() :
 
             df_gen_final = df_gen_final.append(df_gen)  
 
-        df_family_final = df_family_final.sort_values(['niveau', 'genealogie'])        
+        df_family_final = df_family_final.sort_values(['genealogie', 'niveau'])        
         df_family_final = df_family_final.drop(['genealogie','id_fardeau','num_bl',
                                                 'num_cmd_sap','id_rouleau', 'date_depart_client'],axis=1)
-        df_family_final = df_family_final.drop_duplicates()
+        df_family_final = df_family_final.drop_duplicates(subset = ['id_produit'])
         
     else :
         pass
 
     # Affichage df(s)
-    st.markdown("### Product history")
-    st.dataframe(df_gen_final)
+    if list_history[2] == 'Bobine' or list_history[2] == 'Fardeau' :
+
+        st.markdown("### Product history")
+        st.dataframe(df_gen_final)
+    
+    st.write(list_history)
     st.markdown("### Product's family (Everything from the same roll)")
     st.dataframe(df_family_final)
     
-    st.info("More to come")
     #----------------------------#
     st.markdown("* * *")
 
@@ -423,9 +467,9 @@ def main() :
             if radio_rlx == 'Tout' :
                 st.dataframe(df_rlx_final)
             elif radio_rlx == 'Infos générales' :
-                st.table(infos_g)
+                st.dataframe(infos_g)
             elif radio_rlx == 'Caracteristiques' :
-                st.table(carac_rlx)
+                st.dataframe(carac_rlx)
 
             
             rows_mesure = session.execute("""SELECT * FROM ods.mesures 
@@ -442,29 +486,55 @@ def main() :
                                                          'id_rouleaux','pqp','provenance','spec_max',
                                                          'spec_min'])
                 df_mesure_final = df_mesure_final.append(df_mesure)
+            try :
+
+                df_mesure_final_horsspec = pd.DataFrame()
+                tempo = (df_mesure_final['hors_spec'] == '1')
+                df_mesure_final_horsspec = df_mesure_final[tempo]
+
+                df_mesure_final = df_mesure_final.sort_values(['date_mesure', 'lib_mesure'])        
+                df_mesure_final = df_mesure_final.drop(['machine_prod','reference_prod','code_mesure',
+                                                        'code_prod','hors_spec','id_rouleaux','provenance'],axis=1)
+
+                df_mesure_final_horsspec = df_mesure_final_horsspec.sort_values(['date_mesure', 'lib_mesure'])        
+                df_mesure_final_horsspec = df_mesure_final_horsspec.drop(['machine_prod','reference_prod','code_mesure',
+                                                                          'code_prod','hors_spec',
+                                                                          'id_rouleaux','provenance'],axis=1)
+                st.markdown("* * *")
+                st.markdown("### Mesures faites sur ce rouleau")
+                radio_mesure = st.radio('Quelles infos afficher ?', ['Tout','Hors Spec'])
+                if radio_mesure == 'Tout' :
+                    st.dataframe(df_mesure_final)
+                elif radio_mesure == 'Hors Spec' :
+                    st.dataframe(df_mesure_final_horsspec)
+                    
+            except :
                 
-            df_mesure_final_horsspec = pd.DataFrame()
-            tempo = (df_mesure_final['hors_spec'] == '1')
-            df_mesure_final_horsspec = df_mesure_final[tempo]
-            
-            df_mesure_final = df_mesure_final.sort_values(['date_mesure', 'lib_mesure'])        
-            df_mesure_final = df_mesure_final.drop(['machine_prod','reference_prod','code_mesure',
-                                                    'code_prod','hors_spec','id_rouleaux','provenance'],axis=1)
-            
-            df_mesure_final_horsspec = df_mesure_final_horsspec.sort_values(['date_mesure', 'lib_mesure'])        
-            df_mesure_final_horsspec = df_mesure_final_horsspec.drop(['machine_prod','reference_prod','code_mesure',
-                                                                      'code_prod','hors_spec',
-                                                                      'id_rouleaux','provenance'],axis=1)
+                st.markdown("* * *")
+                st.markdown("### Mesures faites sur ce rouleau")                
+                st.info("Pas de mesures pour ce rouleaux")
                 
-            st.markdown("### Mesures faites sur ce rouleau")       
-            radio_mesure = st.radio('Quelles infos afficher ?', ['Tout','Hors Spec'])
-            if radio_mesure == 'Tout' :
-                st.dataframe(df_mesure_final)
-            elif radio_mesure == 'Hors Spec' :
-                st.dataframe(df_mesure_final_horsspec)
-            
-            
+            st.markdown("* * *")
             st.markdown("### Rapport OCS du rouleau (V3)")
+            df_ocs_final = pd.DataFrame()
+            
+            rows_ocs = session.execute("""SELECT * FROM ods.ocs 
+                                          WHERE id_rouleaux = $$"""+id_produit+"""$$;
+                                          """)
+            for row in rows_ocs :
+                list_ocs = []
+                for i in range(len(row)) :            
+                    list_ocs.append(row[i])
+                    
+                df_ocs = pd.DataFrame([list_ocs], columns = ['machine_prod','reference_prod','horodate_fin',
+                                                                'id_rouleaux','chemin_data','enrouleuse',
+                                                                'grd_chromosome_abs','grd_chromosome_ppm',
+                                                                'petit_chromosome_abs','petit_chromosome_ppm',
+                                                                'pqp','statut_blocage','surface'])
+                df_ocs_final = df_ocs_final.append(df_ocs)
+                st.dataframe(df_ocs_final)
+                
+                st.write('< Nombre de grand chromosome :', df_ocs_final['grd_chromosome_abs'][0], '> &nbsp;&nbsp;&nbsp;&nbsp < Nombre de petit chromosome :', df_ocs_final['petit_chromosome_abs'][0], '>')
             
             st.info("More to come")
 
@@ -482,7 +552,30 @@ def main() :
         #------------Fardeaux-----------#
         st.title("""Fardeaux / _?_ """)
         
-        st.info("Coming soon")
+        df_fdx_final = pd.DataFrame()
+        
+        rows_fdx = session.execute("""SELECT * FROM ods.fdx_fardeaux
+                                      WHERE id_fardeaux = $$"""+id_produit+"""$$;
+                                   """)
+
+        for row in rows_fdx :   
+            list_fdx = []
+            for i in range(len(row)) :            
+                list_fdx.append(row[i])    
+
+            df_fdx = pd.DataFrame([list_fdx], columns = ['id_fardeau','code_prod','date_creation',
+                                                         'hauteur','largeur','lieux_stockage',
+                                                         'login','poids_brut','poids_net','pqp',
+                                                         'statut_commercial','unit_origine'])
+            df_fdx_final = df_fdx_final.append(df_fdx)
+
+        st.write("__Date entre la création du fardeaux et son départ chez le client : __")
+        st.write(getDuration(list_fdx[2], df_gen_final.iloc[0][2]))
+        
+        st.write("__Infos générales__")
+        st.write(df_fdx_final) 
+        
+        st.info("More coming")
     
         #----------------------------#
         
@@ -517,8 +610,8 @@ if __name__ == "__main__":
     st.markdown("* * *")
     password = st.text_input("Password", key="pwd", type="password")
     st.markdown("* * *")
-    if password == "password" :
-        main()
+    if password == "genealogie" :
+        main_gene()
     
     if password == "rouge_vert" :
         main_rv()
