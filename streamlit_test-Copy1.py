@@ -96,7 +96,7 @@ def getDuration(then, now, interval = "default"):
         'default': totalDuration()
     }[interval]
 
-def vitesse_ligne_actuelle(machine_prod) :            
+def vitesse_ligne_actuelle(machine_prod, datedebut, datefin,yyear) :            
     if machine_prod == 'V1' :
         tag_vitesse = 'V1.LF.enr1.SI3880.pv'
     elif machine_prod == 'V2' :
@@ -109,7 +109,7 @@ def vitesse_ligne_actuelle(machine_prod) :
         st.info("FT1 pas encore géré")
     else :
         st.warning("Veuillez choisir une ligne correcte")
-
+        
     try :
         rows_vitesse = session.execute("""SELECT value
                                     FROM aethertimeseries.datapointsyear 
@@ -122,6 +122,7 @@ def vitesse_ligne_actuelle(machine_prod) :
                                     ORDER BY timestamp DESC
                                     LIMIT 1;
                                """)
+        
         for row in rows_vitesse :
             list_vitesse = [row.value]
 
@@ -130,6 +131,42 @@ def vitesse_ligne_actuelle(machine_prod) :
         st.warning("Il y a eu un problème - sûrement lors de l'import du tag")
         vitesse = ("ERROR")
     return vitesse
+
+def reference_ligne_actuelle(machine_prod, datedebut, datefin,yyear) :            
+    if machine_prod == 'V1' :
+        st.info("Tag référence de v1 inconnu pour le moment")
+    elif machine_prod == 'V2' :
+        tag_reference = 'V2.LF.LV2.recette'
+    elif machine_prod == 'V3' :
+        tag_reference = 'V3.LF.V32.Recette.pv'
+    elif machine_prod == 'T4' :
+        tag_reference = 'T4.LF.LF.vitM6.pv'
+    elif machine_prod == 'FT1' :
+        st.info("FT1 pas encore géré")
+    else :
+        st.warning("Veuillez choisir une ligne correcte")
+        
+    try :
+        rows_reference = session.execute("""SELECT value
+                                    FROM aethertimeseries.datapointsyear 
+                                    WHERE name = $$"""+tag_reference+"""$$ 
+                                    AND year = """+yyear+"""
+
+                                    AND timestamp >= $$"""+str(datedebut)+"""$$
+                                    AND timestamp <= $$"""+str(datefin)+"""$$
+
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1;
+                               """)
+        
+        for row in rows_reference :
+            list_reference = [row.value]
+
+        reference = round(float(list_reference[0]),1)
+    except :
+        st.warning("Il y a eu un problème - sûrement lors de l'import du tag")
+        reference = ("ERROR")
+    return reference
 
 def creation_dataframes(list_bonne_marche, path_part_1) :
     list_return = []
@@ -186,7 +223,7 @@ def fusion_dataframes(list_of_dataframe) :
     
 ###########################################################################
 
-#                                              #-- Rouge Vert: --#
+                                              #-- Rouge Vert: --#
 def main_rv() :
     
     now1 = datetime.now() - relativedelta(minutes = +3)
@@ -221,7 +258,7 @@ def main_rv() :
     else : 
         for j in range (0,25):
             my_bar1.progress(j)
-            time.sleep(0.1)
+            time.sleep(0.01)
         my_bar1.progress(25)
         choix2 = ["Faire un choix"]
         path = "/share-srvcassandra/Rouge_Vert_Data/" + str(machine_prod)
@@ -235,10 +272,8 @@ def main_rv() :
             st.warning("Selectionnez une référence à étudier")
         else :
              
-            st.success("GO ?")                        
-
+            st.success("GO ?")
             
-
             datedebut = (now1 - relativedelta(minutes = +21)).strftime("%Y-%m-%d %H:%M")
             datefin = now1.strftime("%Y-%m-%d %H:%M")
             yyear = str(now1.year)
@@ -292,7 +327,9 @@ def main_rv() :
                                                            axis = 0,
                                                            ignore_index=True)
                     
-                st.write("La vitesse actuelle de ", machine_prod, " est", vitesse_ligne_actuelle(machine_prod))
+                st.write("La vitesse actuelle de ", machine_prod, " est",
+                         vitesse_ligne_actuelle(machine_prod, datedebut, datefin,yyear))
+                
                 path_part_1 = "/share-srvcassandra/Rouge_Vert_Data/" + str(machine_prod) + "/" + str(reference_prod) + "/"
 
                 st.dataframe(df_bonne_periode_final)
@@ -300,6 +337,10 @@ def main_rv() :
 
     
     #-------------------------------------------------------------------------------#
+    
+###########################################################################
+
+                                              #-- Généalogie: --#    
 
 def main_gene() :
     
@@ -592,16 +633,216 @@ def main_gene() :
     else : 
         st.warning("Bug dans la matrice, veuillez selectionner un produit pour le rapport !")
         
+    #-------------------------------------------------------------------------------#
+    
+###########################################################################
 
+                                              #-- Dérogations : --#    
+
+def main_derogations() :
+    
+    my_bar1 = st.progress(1)
+    
+    testest = pd.ExcelFile("/share-srvcassandra/Divers/Derogations 3.xlsx")
+    testestdf = testest.parse('Feuil1', skiprows=2, index_col=None, na_values=['NA'],
+                              usecols=(5,6,8,9,10,11,12,13,14,15,16,17,18,19,20,21))
+    my_bar1.progress(25)
+    
+    testestdf2 = testest.parse('Feuil1', skiprows=2, index_col=None, na_values=['NA'], usecols=(5,6))
+    testestdf2 = testestdf2.dropna()
+    my_bar1.progress(50)
+    df1=pd.merge(testestdf,testestdf2, how='inner', right_index=True, left_index=True)
+    df1 = df1.drop(['Code Prod_x','Mois','Date de la décision','Année','Code Prod_y','Ref prod_y'],axis=1)
+    df1 = df1.reset_index(drop=True)
+    
+    st.write("__Voilà la lsite de toutes les dérogations__ ; Il y en a ", len(df1))
+    
+    my_bar1.progress(75)
+    st.dataframe(df1)
+    my_bar1.progress(100)
+    #------------------------------------Sidebar------------------------------------#
+    
+    st.sidebar.title("Dérogations :")
+    st.sidebar.markdown("* * *")
+    st.sidebar.markdown("""
+    
+    Retrouvez vos dérrogations préférés en __4 étapes__ !
+    
+    > 1. Choix de la ligne
+    > 2. Choix de la référence
+    > 3. Choix du type de déro
+    > 4. Choix du motif
+    
+    """)
+    
+    my_sidebar2 = st.sidebar.progress(1)
+    my_sidebar3 = st.sidebar.progress(1)
+    my_sidebar4 = st.sidebar.progress(1)
+    my_sidebar5 = st.sidebar.progress(1)
+    
+    #-------------------------------------------------------------------------------#
+    
+    
+    
+    dftemp = df1['Ligne']
+    dftemp = dftemp.drop_duplicates()
+    dftemp = dftemp.sort_values()
+    dftemp = dftemp.reset_index(drop=True)
+    choix1 = ['Faire un choix']
+    for i in range (len(dftemp)) :
+        choix1.append(dftemp[i])
+        
+    machine_prod = st.selectbox("Selection de la ligne de production",choix1)
+    
+    if machine_prod == 'Faire un choix' :
+        st.warning("Veuillez selectionner une ligne de production")
+    else :
+        my_bar2 = st.progress(25)
+        my_sidebar2.progress(25)
+        
+        temp = (df1['Ligne'] == str(machine_prod))
+        df2 = df1[temp]
+        df2 = df2.drop(['Cloturé'],axis=1)
+        time.sleep(0.33)
+        my_bar2.progress(50)
+        my_sidebar2.progress(50)
+
+        st.write(machine_prod, "__possède__ ", len(df2), "__dérogations__. Continuez pour affiner la recherche.")
+        
+        time.sleep(0.33)
+        my_bar2.progress(75)
+        my_sidebar2.progress(75)
+        
+        time.sleep(0.33)
+        my_bar2.progress(100)
+        my_sidebar2.progress(100)
+        
+        st.dataframe(df2)
+        
+        dftemp = df2['Ref prod_x']
+        dftemp = dftemp.drop_duplicates()
+        dftemp = dftemp.sort_values()
+        dftemp = dftemp.reset_index(drop=True)
+        
+        choix2 = ['Faire un choix']
+        for i in range (len(dftemp)) :
+            choix2.append(dftemp[i])
+
+        reference_prod = st.selectbox("Selection de la référence de production", choix2)
+
+        if reference_prod == 'Faire un choix' :
+            st.warning("Veuillez choisir une référence")
+
+        else :
+            
+            my_bar3 = st.progress(25)
+            my_sidebar3.progress(25)
+            
+            temp = (df2['Ref prod_x'] == str(reference_prod))
+            
+            time.sleep(0.33)
+            my_bar3.progress(50)
+            my_sidebar3.progress(50)
+            
+            df3 = df2[temp]
+
+            time.sleep(0.33)
+            my_bar3.progress(75)
+            my_sidebar3.progress(75)
+
+            time.sleep(0.33)
+            my_bar3.progress(100)
+            my_sidebar3.progress(100)
+            
+            pourcent = round((len(df3) / len(df2)),3)*100
+            st.write("La référence \'", reference_prod, "\' possède ", len(df3), "dérogations.")
+            st.write("C'est ", pourcent, "% des dérogations de ", machine_prod, ".")
+            st.dataframe(df3)
+
+            dftemp = df3['Famille']
+            dftemp = dftemp.drop_duplicates()
+            dftemp = dftemp.reset_index(drop=True)
+            choix3 = ['Faire un choix']
+            for i in range (len(dftemp)) :
+                choix3.append(dftemp[i])
+
+            famille_dero = st.selectbox("Selectionnez la famille de dérogation :", choix3)
+
+            if famille_dero == 'Faire un choix' :
+                st.warning("Veuillez choisir une famille de dérogation")
+
+            else :
+                
+                my_bar4 = st.progress(25)
+                my_sidebar4.progress(25)
+                
+                temp = (df3['Famille'] == str(famille_dero))
+                
+                time.sleep(0.33)
+                my_bar4.progress(50)
+                my_sidebar4.progress(50)
+        
+                df4 = df3[temp]
+                
+                time.sleep(0.33)
+                my_bar4.progress(75)
+                my_sidebar4.progress(75)
+
+                time.sleep(0.33)
+                my_bar4.progress(100)
+                my_sidebar4.progress(100)
+                
+                st.write("Il reste ", len(df4), "dérogations dans votre recherche. Encore une étape !")
+                df4 = df4.drop(['Ref prod_x','Ligne','PQP init.'],axis=1)
+                st.dataframe(df4)
+
+                dftemp = df4['Motif']
+                dftemp = dftemp.drop_duplicates()
+                dftemp = dftemp.reset_index(drop=True)
+                choix4 = ['Faire un choix']
+                for i in range (len(dftemp)) :
+                    choix4.append(dftemp[i])
+
+                motif_dero = st.selectbox("Selectionnez le motif de la dérogation :", choix4)
+
+                if motif_dero == 'Faire un choix' :
+                    st.warning("Veuillez choisir un motif")
+
+                else :
+                    my_bar5 = st.progress(25)
+                    my_sidebar5.progress(25)
+                    
+                    temp = (df4['Motif'] == str(motif_dero))
+                    
+                    time.sleep(0.33)
+                    my_bar5.progress(50)
+                    my_sidebar5.progress(50)
+                    
+                    df5 = df4[temp]
+                    
+                    time.sleep(0.33)
+                    my_bar5.progress(75)
+                    my_sidebar5.progress(75)
+
+                    time.sleep(0.33)
+                    my_bar5.progress(100)
+                    my_sidebar5.progress(100)
+                    st.table(df5)
+                    
+                    st.sidebar.success("Terminé !")
+        
+    
+    
+###########################################################################    
         
 if __name__ == "__main__":
     
     st.sidebar.markdown("""
-    > ### `Product Dashboard`
-    > Avec cette webApp, vous serrez en mesure de récupérer toutes les informations relatives à un produit ainsi que tout son cycle de vie dans l'usine.
+    > ### `Product Dashboards`
+    > L'information rapide et facile d'accès !
     
     
-    > _This webApp is able to provide you with all informations relative to a TFE product; from raw materials to customers' commands._
+    > _Fast and easy to access informations !_
     > * * *
     """)
     
@@ -615,3 +856,6 @@ if __name__ == "__main__":
     
     if password == "rouge_vert" :
         main_rv()
+        
+    if password == "derogations" :
+        main_derogations()
